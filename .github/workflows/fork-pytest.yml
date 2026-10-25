@@ -1,0 +1,30 @@
+# Fork-only check: run the Python SDK refresher tests on GitHub-hosted Ubuntu.
+name: Fork Pytest
+
+on:
+  push:
+    branches:
+      - "fork-ci/**"
+
+permissions:
+  contents: read
+
+jobs:
+  pytest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      SETUPTOOLS_SCM_PRETEND_VERSION_FOR_OPENSHELL: "0.0.0"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+      - name: Sync dependencies
+        run: uv sync --frozen
+      - name: Generate protobuf stubs
+        run: uv run --frozen python tasks/scripts/generate_python_proto.py
+      - name: Ruff
+        run: |
+          uv run --frozen ruff format --check python/openshell/sandbox.py python/openshell/sandbox_test.py
+          uv run --frozen ruff check python/openshell/sandbox.py python/openshell/sandbox_test.py
+      - name: Refresher tests
+        run: uv run --frozen pytest python/ -q
