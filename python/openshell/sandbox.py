@@ -1970,6 +1970,26 @@ def _read_oidc_token_bundle(gateway_dir: pathlib.Path) -> dict | None:
         return None
 
 
+def _read_gateway_oidc_scopes(gateway_dir: pathlib.Path) -> str | None:
+    """Return the gateway's saved `oidc_scopes` as a space-separated string.
+
+    The CLI refreshes with these scopes (`ensure_valid_oidc_token_bundle`)
+    so providers that select the token's resource by scope issue the same
+    kind of token on refresh. Missing or unreadable metadata means no
+    scopes, as in the CLI.
+    """
+    try:
+        metadata = json.loads(
+            (gateway_dir / "metadata.json").read_text(encoding="utf-8")
+        )
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        return None
+    scopes = metadata.get("oidc_scopes") if isinstance(metadata, dict) else None
+    if not isinstance(scopes, str):
+        return None
+    return " ".join(scopes.split()) or None
+
+
 def _normalize_issuer(bundle: dict) -> str | None:
     """Return the bundle's issuer with a trailing slash stripped.
 
@@ -2317,15 +2337,17 @@ class _OidcRefresher:
         # RFC 6749 §6: refresh_token grant. Form-encoded POST with
         # grant_type, refresh_token, and (for a public client) client_id.
         # No Authorization header (token_endpoint_auth_method="none").
+        # Like the CLI, send the gateway's login scopes when it has any.
+        data = {
+            "grant_type": "refresh_token",
+            "refresh_token": refresh_token,
+            "client_id": client_id,
+        }
+        scopes = _read_gateway_oidc_scopes(self._gateway_dir)
+        if scopes is not None:
+            data["scope"] = scopes
         try:
-            resp = self._http.post(
-                token_endpoint,
-                data={
-                    "grant_type": "refresh_token",
-                    "refresh_token": refresh_token,
-                    "client_id": client_id,
-                },
-            )
+            resp = self._http.post(token_endpoint, data=data)
         except httpx.HTTPError as e:
             raise SandboxError(
                 f"OIDC token refresh failed for gateway "

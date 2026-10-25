@@ -976,6 +976,39 @@ def test_refresher_returns_cached_token_when_fresh(tmp_path: Path) -> None:
     assert seen == []  # no discovery, no refresh
 
 
+def _refresh_form_for_gateway(gateway_dir: Path, metadata: dict[str, Any]) -> dict:
+    """Refresh a stale bundle through the gateway-built provider and return
+    the form fields it posted to the token endpoint."""
+    (gateway_dir / "metadata.json").write_text(json.dumps(metadata))
+    _write_bundle(gateway_dir, access_token="old", expires_at=1)
+    seen_refresh: list[Any] = []
+    provider, close = _make_cluster_bearer_provider(gateway_dir, "g", write_back=False)
+    assert close is not None
+    refresher = cast("Any", provider).__self__
+    _install_mock_transport(refresher, _make_mock_transport(seen_refresh=seen_refresh))
+    try:
+        assert provider() == "refreshed-jwt"
+    finally:
+        close()
+    assert len(seen_refresh) == 1
+    return dict(__import__("urllib.parse").parse.parse_qsl(seen_refresh[0][1].decode()))
+
+
+def test_refresher_sends_gateway_oidc_scopes(tmp_path: Path) -> None:
+    """Refresh reuses the gateway's login scopes, like the CLI does."""
+    form = _refresh_form_for_gateway(
+        tmp_path,
+        {"auth_mode": "oidc", "oidc_scopes": "openid api://openshell/.default"},
+    )
+    assert form["grant_type"] == "refresh_token"
+    assert form.get("scope") == "openid api://openshell/.default"
+
+
+def test_refresher_omits_scope_without_gateway_oidc_scopes(tmp_path: Path) -> None:
+    form = _refresh_form_for_gateway(tmp_path, {"auth_mode": "oidc"})
+    assert "scope" not in form
+
+
 def test_refresher_picks_up_disk_rotation_before_refreshing(
     tmp_path: Path,
 ) -> None:
